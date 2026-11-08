@@ -26,7 +26,9 @@ jobs:
           # Use the native ARM64 MSBuild: the WDK only ships arm64/x64
           # infverif.dll (no x86), so the x86 MSBuild cannot run INF
           # verification on this host.
-          $msbuild = & vswhere -latest -requires Microsoft.Component.MSBuild `
+          # Pin VS 2022 (17.x): the image also has VS 2026, but the WDK's
+          # MSBuild tasks (ValidateNTTargetVersion etc.) only load in 2022.
+          $msbuild = & vswhere -latest -version '[17.0,18.0)' -requires Microsoft.Component.MSBuild `
             -find 'MSBuild\**\Bin\arm64\MSBuild.exe' | Select-Object -First 1
           if (-not $msbuild) { throw 'ARM64 MSBuild not found via vswhere' }
           $bin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
