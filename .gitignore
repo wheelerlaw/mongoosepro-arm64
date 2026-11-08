@@ -8,3 +8,4 @@ Release/
 *.p12
 *.key
 out/
+packages/

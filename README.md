@@ -84,9 +84,15 @@ with a local `WDKTestCert`). To build without any signing, pass
 ## CI / releases
 
 `.github/workflows/build.yml` builds `Release|ARM64` on the GitHub-hosted
-`windows-11-arm` runner (VS 2022 Enterprise + WDK 10.0.26100 + ARM64
-Spectre libs are in the image; MSBuild is located via `vswhere`).
-`/warnaserror` is on — any warning fails the build.
+`windows-2025-vs2026` runner (x64 host, cross-compiled to ARM64 — the same
+approach as microsoft/Windows-Driver-Samples CI). The SDK/WDK come from
+NuGet (`packages.config` → `Microsoft.Windows.SDK.CPP*` +
+`Microsoft.Windows.WDK.*` 10.0.28000.2526, restored to `packages\` and
+wired in via `Directory.Build.props`; local builds without `packages\`
+still use your installed SDK/WDK). MSBuild is located via `vswhere`
+(64-bit `Bin\amd64\MSBuild.exe`); `stampinf`/`Inf2Cat`/`signtool` are taken
+from the restored packages. `/warnaserror` is on — any warning fails the
+build.
 
 - Every run stamps the INF `DriverVer`, produces a catalog via `inf2cat`,
   and uploads `dtmonpro-arm64-<version>.zip` + `SHA256SUMS` as an artifact.
