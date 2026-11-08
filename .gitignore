@@ -1,0 +1,10 @@
+ARM64/
+x64/
+Debug/
+Release/
+.vs/
+*.user
+*.pfx
+*.p12
+*.key
+out/

@@ -1,0 +1,71 @@
+; DTMONPRO.INF
+;
+; ARM64 KMDF installation for the MongoosePro JLR J2534 interface
+; (USB\VID_18E1&PID_0104), replacing the x64-only vendor dtmonpro.sys.
+; KMDF 1.15 is inbox on Windows 10/11 - no coinstaller.
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=VehiclePassThru
+ClassGuid={FB1CF0C4-B412-451f-9F04-DF7537A5003C}
+Provider=%ProviderName%
+CatalogFile=dtmonpro.cat
+DriverVer=11/04/2026,1.0.0.0
+PnpLockdown=1
+
+; VehiclePassThru is a vendor-defined device class. Register its
+; friendly name exactly like the original monpjaguar.inf so the device
+; shows under "Vehicle PassThru Interfaces" in Device Manager.
+[ClassInstall32]
+AddReg=PassThruClassReg
+
+[PassThruClassReg]
+HKR,,,0,%PassThruClassName%
+
+[DestinationDirs]
+DefaultDestDir = 13    ; run from the driver store
+
+; DIRID 13 (driver store) requires Windows 10 build 16299+, so the
+; Models section carries a TargetOSVersion decoration.
+[Manufacturer]
+%MfgName%=DeviceList,NTARM64.10.0...16299
+
+[DeviceList.NTARM64.10.0...16299]
+%USB\VID_18E1&PID_0104.DeviceDesc%=DriverInstall,USB\VID_18E1&PID_0104
+
+[DriverInstall.NTARM64]
+CopyFiles=DriverInstall.Files
+
+[DriverInstall.Files]
+dtmonpro.sys
+
+[DriverInstall.NTARM64.Services]
+AddService=dtmonpro, 0x00000002, DriverServiceInst
+
+[DriverServiceInst]
+DisplayName=%SvcDesc%
+ServiceType=1            ; SERVICE_KERNEL_DRIVER
+StartType=3              ; SERVICE_DEMAND_START
+ErrorControl=1           ; SERVICE_ERROR_NORMAL
+ServiceBinary=%13%\dtmonpro.sys
+LoadOrderGroup=Base
+
+[DriverInstall.NTARM64.Wdf]
+KmdfService=dtmonpro, dtmonpro_wdfsect
+
+[dtmonpro_wdfsect]
+KmdfLibraryVersion=1.15
+
+[SourceDisksNames]
+1=%DiskDescription%,,,""
+
+[SourceDisksFiles]
+dtmonpro.sys=1
+
+[Strings]
+USB\VID_18E1&PID_0104.DeviceDesc = "MongoosePro JLR J2534 Interface (ARM64)"
+ProviderName     = "mongoosepro-arm64 (unofficial)"
+MfgName          = "Drew Technologies, Inc."
+DiskDescription  = "MongoosePro JLR Installation Disk"
+PassThruClassName = "Vehicle PassThru Interfaces"
+SvcDesc          = "MongoosePro JLR USB Device Driver (dtmonpro, ARM64)"

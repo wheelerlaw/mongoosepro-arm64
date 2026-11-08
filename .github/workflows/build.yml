@@ -1,0 +1,198 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-11-arm
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      signed: ${{ steps.sig.outputs.has_signing }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Locate MSBuild and WDK tools
+        shell: pwsh
+        run: |
+          # Use the native ARM64 MSBuild: the WDK only ships arm64/x64
+          # infverif.dll (no x86), so the x86 MSBuild cannot run INF
+          # verification on this host.
+          $msbuild = & vswhere -latest -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\arm64\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'ARM64 MSBuild not found via vswhere' }
+          $bin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory |
+            Where-Object Name -match '^\d+\.\d+\.\d+\.\d+$' |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $bin) { throw 'Windows Kits bin dir not found' }
+          $buildBin = "${env:ProgramFiles(x86)}\Windows Kits\10\build\$($bin.Name)\bin"
+          if (-not (Test-Path $buildBin)) { throw "WDK build bin dir not found: $buildBin" }
+          "msbuild=$msbuild"          | Out-File $env:GITHUB_ENV -Append
+          "stampinf=$($bin.FullName)\x86\stampinf.exe"   | Out-File $env:GITHUB_ENV -Append
+          "inf2cat=$($bin.FullName)\x86\Inf2Cat.exe"     | Out-File $env:GITHUB_ENV -Append
+          "signtool=$($bin.FullName)\arm64\signtool.exe" | Out-File $env:GITHUB_ENV -Append
+          # The driver verifier task loads "<arch>\infverif.dll" as a
+          # relative path, resolved via PATH — the DLL lives under
+          # build\<ver>\bin\<arch>, so put that dir's parent on PATH.
+          "PATH=$buildBin;$env:PATH" | Out-File $env:GITHUB_ENV -Append
+          "WDK bin: $($bin.FullName)"
+
+      - name: Compute version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match '^refs/tags/v(\d+\.\d+\.\d+)$') {
+            $v = "$($Matches[1]).0"
+          } else {
+            $v = "0.0.$env:GITHUB_RUN_NUMBER.0"
+          }
+          "version=$v" | Out-File $env:GITHUB_OUTPUT -Append
+          "version=$v" | Out-File $env:GITHUB_ENV -Append
+          "Version: $v (ref $env:GITHUB_REF)"
+
+      - name: Build (Release|ARM64, warnings as errors, no test-sign)
+        shell: pwsh
+        run: |
+          & $env:msbuild dtmonpro.sln /t:Rebuild /p:Configuration=Release `
+            /p:Platform=ARM64 /p:SignMode=Off /warnaserror
+          if ($LASTEXITCODE -ne 0) { throw "msbuild failed ($LASTEXITCODE)" }
+
+      - name: Stage package and stamp DriverVer
+        shell: pwsh
+        run: |
+          $pkg = Join-Path $env:GITHUB_WORKSPACE 'ARM64\Release\dtmonpro'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'out\dtmonpro'
+          New-Item $out -ItemType Directory -Force | Out-Null
+          Copy-Item "$pkg\dtmonpro.sys" $out
+          Copy-Item "$pkg\dtmonpro.inf" $out
+          Copy-Item "certs\mongoosepro-arm64-test.cer" $out
+          $date = (Get-Date).ToString('MM/dd/yyyy')
+          & $env:stampinf -f "$out\dtmonpro.inf" -d $date -v $env:version
+          if ($LASTEXITCODE -ne 0) { throw "stampinf failed ($LASTEXITCODE)" }
+          Select-String -Path "$out\dtmonpro.inf" -Pattern 'DriverVer'
+
+      - name: Check signing secrets and decode PFX
+        id: sig
+        shell: pwsh
+        env:
+          PFX64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          PFXPW: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $has = ($env:PFX64 -ne '') -and ($env:PFXPW -ne '')
+          "has_signing=$($has.ToString().ToLower())" | Out-File $env:GITHUB_OUTPUT -Append
+          if ($has) {
+            [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx",
+              [Convert]::FromBase64String($env:PFX64))
+            'PFX decoded to RUNNER_TEMP'
+          } else {
+            'No signing secrets — unsigned build'
+          }
+
+      - name: Sign driver binary
+        if: steps.sig.outputs.has_signing == 'true'
+        shell: pwsh
+        env:
+          PFXPW: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          & $env:signtool sign /fd sha256 /f "$env:RUNNER_TEMP\sign.pfx" `
+            /p $env:PFXPW /tr http://timestamp.digicert.com /td sha256 `
+            "$env:GITHUB_WORKSPACE\out\dtmonpro\dtmonpro.sys"
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign .sys failed" }
+
+      - name: Generate catalog (Inf2Cat)
+        shell: pwsh
+        run: |
+          & $env:inf2cat /driver:"$env:GITHUB_WORKSPACE\out\dtmonpro" /os:10_GE_ARM64
+          if ($LASTEXITCODE -ne 0) { throw "inf2cat failed ($LASTEXITCODE)" }
+
+      - name: Sign catalog
+        if: steps.sig.outputs.has_signing == 'true'
+        shell: pwsh
+        env:
+          PFXPW: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          & $env:signtool sign /fd sha256 /f "$env:RUNNER_TEMP\sign.pfx" `
+            /p $env:PFXPW /tr http://timestamp.digicert.com /td sha256 `
+            "$env:GITHUB_WORKSPACE\out\dtmonpro\dtmonpro.cat"
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign .cat failed" }
+
+      - name: Verify signatures and signer
+        if: steps.sig.outputs.has_signing == 'true'
+        shell: pwsh
+        run: |
+          $cer = "$env:GITHUB_WORKSPACE\certs\mongoosepro-arm64-test.cer"
+          certutil -addstore -f Root $cer
+          certutil -addstore -f TrustedPublisher $cer
+          $expected = (Get-PfxCertificate $cer).Thumbprint
+          foreach ($f in 'dtmonpro.sys','dtmonpro.cat') {
+            $p = "$env:GITHUB_WORKSPACE\out\dtmonpro\$f"
+            & $env:signtool verify /pa /v $p
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed: $f" }
+            $actual = (Get-AuthenticodeSignature $p).SignerCertificate.Thumbprint
+            "$f signer: $actual"
+            if ($actual -ne $expected) { throw "Signer mismatch on $f : $actual != $expected" }
+          }
+
+      - name: Package zip and checksums
+        shell: pwsh
+        run: |
+          $zip = "dtmonpro-arm64-$env:version.zip"
+          Compress-Archive -Path "$env:GITHUB_WORKSPACE\out\dtmonpro\*" `
+            -DestinationPath "$env:GITHUB_WORKSPACE\out\$zip" -Force
+          $h = (Get-FileHash "$env:GITHUB_WORKSPACE\out\$zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  $zip" | Out-File "$env:GITHUB_WORKSPACE\out\SHA256SUMS" -Encoding ascii
+          Get-Content "$env:GITHUB_WORKSPACE\out\SHA256SUMS"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dtmonpro-arm64-${{ env.version }}
+          path: |
+            out/dtmonpro-arm64-${{ env.version }}.zip
+            out/SHA256SUMS
+
+      - name: Remove PFX
+        if: always() && steps.sig.outputs.has_signing == 'true'
+        shell: pwsh
+        run: |
+          Remove-Item "$env:RUNNER_TEMP\sign.pfx" -Force -ErrorAction SilentlyContinue
+          'PFX removed'
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-11-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Require a signed build for releases
+        shell: pwsh
+        run: |
+          if ('${{ needs.build.outputs.signed }}' -ne 'true') {
+            throw 'Tag release requires the SIGNING_PFX secrets; build was unsigned'
+          }
+
+      - name: Download artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dtmonpro-arm64-${{ needs.build.outputs.version }}
+          path: out
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $zip = Get-ChildItem out\dtmonpro-arm64-*.zip | Select-Object -First 1
+          gh release create $tag "$($zip.FullName)" "out\SHA256SUMS" `
+            --title "dtmonpro-arm64 $tag" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
