@@ -9,3 +9,5 @@ Release/
 *.key
 out/
 packages/
+*.msi
+logs/

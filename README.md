@@ -134,3 +134,32 @@ WPP tracing. To see them:
   InfVerif `/u` (universal) compliance you may have to drop it and
   accept the class showing a raw GUID in Device Manager.
 - KMDF 1.15 is inbox on Windows 10/11 — no coinstaller is needed.
+
+## One-shot install (`install.ps1`)
+
+Extract the release zip and run from an **elevated** PowerShell prompt. If
+the vendor `J2534_Driver_x64.msi` isn't next to the script, it is downloaded
+from `https://d5t5.com/sw/J2534_Driver_x64.msi` (override with
+`-VendorMsiUrl`) and must match the tested SHA256 or the install stops:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+What it does, in order:
+
+1. Checks you're elevated, on ARM64 Windows, and that the four driver
+   files are present; gets the vendor MSI (local copy, or download). A
+   local MSI with a different hash only warns; a downloaded one must match.
+2. Checks Secure Boot is off and enables `bcdedit testsigning` if needed.
+3. Trusts `mongoosepro-arm64-test.cer` (Root + TrustedPublisher) and
+   stages `dtmonpro.inf` with `pnputil`.
+4. Builds `J2534_Driver_arm64_nodrv.msi` — a copy of the vendor MSI with
+   the x64 driver-install actions removed, so only the J2534 DLL and its
+   `PassThruSupport.04.04` registry entries install. **The original MSI
+   is never modified.**
+5. Installs that MSI (skips if the product is already installed).
+
+`-NoInstall` builds the modified MSI only, without running it. Logs go to
+`logs\install.log` and `logs\vendor_msi.log`. If test signing had to be
+turned on, reboot before plugging the MongoosePro in.

@@ -78,6 +78,7 @@ jobs:
           Copy-Item "$pkg\dtmonpro.sys" $out
           Copy-Item "$pkg\dtmonpro.inf" $out
           Copy-Item "certs\mongoosepro-arm64-test.cer" $out
+          Copy-Item "install.ps1" $out
           $date = (Get-Date).ToString('MM/dd/yyyy')
           & $env:stampinf -f "$out\dtmonpro.inf" -d $date -v $env:version
           if ($LASTEXITCODE -ne 0) { throw "stampinf failed ($LASTEXITCODE)" }
