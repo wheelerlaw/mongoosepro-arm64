@@ -100,7 +100,8 @@ build.
   the `.sys` and `.cat` are Authenticode-signed with that cert; the
   matching public cert is `certs/mongoosepro-arm64-test.cer` and is
   included in the zip.
-- Tagging `vX.Y.Z` stamps version `X.Y.Z.0`, attaches the zip + sums to a
+- Tagging `vX.Y.Z` stamps INF `DriverVer` `X.Y.Z.0` (Windows needs four
+  parts), names the zip `dtmonpro-arm64-X.Y.Z.zip`, attaches it + sums to a
   GitHub release, and **requires** signing (the release step fails if the
   secrets are absent).
 

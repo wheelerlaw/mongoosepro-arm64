@@ -54,13 +54,16 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_REF -match '^refs/tags/v(\d+\.\d+\.\d+)$') {
-            $v = "$($Matches[1]).0"
+            $v = $Matches[1]
           } else {
-            $v = "0.0.$env:GITHUB_RUN_NUMBER.0"
+            $v = "0.0.$env:GITHUB_RUN_NUMBER"
           }
+          # INF DriverVer needs four parts; artifact names use the tag's three.
+          $dv = "$v.0"
           "version=$v" | Out-File $env:GITHUB_OUTPUT -Append
           "version=$v" | Out-File $env:GITHUB_ENV -Append
-          "Version: $v (ref $env:GITHUB_REF)"
+          "drvver=$dv" | Out-File $env:GITHUB_ENV -Append
+          "Version: $v, DriverVer: $dv (ref $env:GITHUB_REF)"
 
       - name: Build (Release|ARM64, warnings as errors, no test-sign)
         shell: pwsh
@@ -80,7 +83,7 @@ jobs:
           Copy-Item "certs\mongoosepro-arm64-test.cer" $out
           Copy-Item "install.ps1" $out
           $date = (Get-Date).ToString('MM/dd/yyyy')
-          & $env:stampinf -f "$out\dtmonpro.inf" -d $date -v $env:version
+          & $env:stampinf -f "$out\dtmonpro.inf" -d $date -v $env:drvver
           if ($LASTEXITCODE -ne 0) { throw "stampinf failed ($LASTEXITCODE)" }
           Select-String -Path "$out\dtmonpro.inf" -Pattern 'DriverVer'
 
